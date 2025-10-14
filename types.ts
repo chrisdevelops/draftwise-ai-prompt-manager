@@ -1,3 +1,4 @@
+
 export interface PromptV {
   id: string;
   baseId: string;
@@ -11,9 +12,7 @@ export interface PromptV {
   createdAt: string;
   updatedAt: string;
   forkedFrom?: string;
-  savedResponse?: string;
-  savedTestModelId?: string;
-  savedTestVariables?: Record<string, string>;
+  savedTestResult?: TestResult;
 }
 
 export interface Folder {
@@ -39,4 +38,24 @@ export interface ModelDefinition {
   id: string;
   name: string;
   provider: Provider;
+}
+
+export interface TestResultMetrics {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  responseTime: number; // in milliseconds
+}
+
+export interface TestResult {
+  id: string; // unique ID for the test run
+  response: string;
+  modelId: string;
+  variables: Record<string, string>;
+  metrics: TestResultMetrics;
+  timestamp: string; // ISO string
+}
+
+export interface Settings {
+  autoSaveTestResult: boolean;
 }

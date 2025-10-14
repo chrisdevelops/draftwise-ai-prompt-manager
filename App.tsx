@@ -1,11 +1,12 @@
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import type { Folder, PromptV, Provider, ApiKeyConfig } from './types';
+import type { Folder, PromptV, Provider, ApiKeyConfig, ModelDefinition, Settings } from './types';
 import useLocalStorage from './hooks/useLocalStorage';
 import Sidebar from './components/Sidebar';
 import PromptView from './components/PromptView';
 import SettingsView from './components/SettingsView';
 import Resizer from './components/Resizer';
-import { ALL_MODELS, validateApiKey } from './services/llmService';
+import { ALL_MODELS, validateApiKey, fetchOpenAIModels } from './services/llmService';
 
 const initialFolders: Folder[] = [
   { id: 'folder-1', name: 'Copywriting', createdAt: new Date().toISOString() },
@@ -25,7 +26,19 @@ const initialPrompts: PromptV[] = [
     version: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    savedResponse: "1. **The Ultimate Guide to {{topic}}: Everything You've Ever Wanted to Know**\n2. **{{topic}} is Dead: Here's What's Replacing It**\n3. **5 Common Mistakes Everyone Makes in {{topic}} (and How to Fix Them)**\n4. **The {{topic}} Cheatsheet: A 5-Minute Guide for Beginners**\n5. **Why We're Obsessed With {{topic}} (And You Should Be, Too)**",
+    savedTestResult: {
+      id: 'saved-test-1',
+      response: "1. **The Ultimate Guide to {{topic}}: Everything You've Ever Wanted to Know**\n2. **{{topic}} is Dead: Here's What's Replacing It**\n3. **5 Common Mistakes Everyone Makes in {{topic}} (and How to Fix Them)**\n4. **The {{topic}} Cheatsheet: A 5-Minute Guide for Beginners**\n5. **Why We're Obsessed With {{topic}} (And You Should Be, Too)**",
+      modelId: 'gemini-2.5-flash',
+      variables: { topic: 'AI Prompt Engineering' },
+      metrics: {
+        promptTokens: 48,
+        completionTokens: 96,
+        totalTokens: 144,
+        responseTime: 1843,
+      },
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
+    },
   },
    {
     id: 'prompt-2',
@@ -39,7 +52,6 @@ const initialPrompts: PromptV[] = [
     version: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    savedResponse: '',
   },
   {
     id: 'prompt-3',
@@ -53,7 +65,6 @@ const initialPrompts: PromptV[] = [
     version: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    savedResponse: '',
   },
 ];
 
@@ -63,17 +74,28 @@ const initialApiKeys: Record<Provider, ApiKeyConfig> = {
   anthropic: { key: '', status: 'untested' },
 };
 
+const initialSettings: Settings = {
+  autoSaveTestResult: false,
+};
+
 
 const App: React.FC = () => {
   const [folders, setFolders] = useLocalStorage<Folder[]>('prompt-manager-folders', initialFolders);
   const [prompts, setPrompts] = useLocalStorage<PromptV[]>('prompt-manager-prompts', initialPrompts);
   const [apiKeys, setApiKeys] = useLocalStorage<Record<Provider, ApiKeyConfig>>('llm-api-keys', initialApiKeys);
+  const [openAIModels, setOpenAIModels] = useLocalStorage<ModelDefinition[]>('openai-models', []);
+  const [settings, setSettings] = useLocalStorage<Settings>('prompt-manager-settings', initialSettings);
 
   const [selectedPromptId, setSelectedPromptId] = useState<string | null>(initialPrompts[0]?.id || null);
   const [activeView, setActiveView] = useState<'editor' | 'settings'>('editor');
   const [notification, setNotification] = useState<{ message: string; isError?: boolean } | null>(null);
   
   const [lastActivePromptId, setLastActivePromptId] = useState<string | null>(initialPrompts[0]?.id || null);
+  
+  const selectedPrompt = useMemo(() => {
+    return prompts.find(p => p.id === selectedPromptId) || null;
+  }, [prompts, selectedPromptId]);
+
   useEffect(() => {
     if (activeView === 'editor' && selectedPromptId) {
       setLastActivePromptId(selectedPromptId);
@@ -88,15 +110,24 @@ const App: React.FC = () => {
     setApiKeys(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'testing', key } }));
     const isValid = await validateApiKey(provider, key);
     setApiKeys(prev => ({ ...prev, [provider]: { ...prev[provider], status: isValid ? 'valid' : 'invalid', key } }));
-  }, [setApiKeys]);
+    if (isValid && provider === 'openai') {
+        const models = await fetchOpenAIModels(key);
+        setOpenAIModels(models);
+    }
+  }, [setApiKeys, setOpenAIModels]);
 
   useEffect(() => {
       // Auto-validate Gemini key from env var on first load if it hasn't been tested.
-      const geminiConfig = apiKeys.gemini;
-      if (geminiConfig.key && geminiConfig.status === 'untested' && process.env.API_KEY) {
-          handleValidateKey('gemini', geminiConfig.key);
+      if (apiKeys.gemini.key && apiKeys.gemini.status === 'untested' && process.env.API_KEY) {
+          handleValidateKey('gemini', apiKeys.gemini.key);
       }
-  }, []); // Run only once on mount
+      
+      // On initial load, if OpenAI key is already considered valid but we have no models, fetch them.
+      if (apiKeys.openai.key && apiKeys.openai.status === 'valid' && openAIModels.length === 0) {
+          fetchOpenAIModels(apiKeys.openai.key).then(setOpenAIModels);
+      }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only once on mount.
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
       e.preventDefault();
@@ -158,7 +189,6 @@ const App: React.FC = () => {
       version: 1,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      savedResponse: '',
     };
     setPrompts(prev => [...prev, newPrompt]);
     setSelectedPromptId(newPrompt.id);
@@ -175,18 +205,38 @@ const App: React.FC = () => {
     const promptToDelete = prompts.find(p => p.id === id);
     if(!promptToDelete) return;
 
-    setPrompts(prev => prev.filter(p => p.id !== id));
-
-    if(selectedPromptId === id) {
-        const otherVersions = prompts.filter(p => p.baseId === promptToDelete.baseId && p.id !== id);
-        if (otherVersions.length > 0) {
-            setSelectedPromptId(otherVersions.sort((a,b) => b.version - a.version)[0].id);
-        } else {
-            setSelectedPromptId(prompts[0]?.id || null);
+    setPrompts(prevPrompts => {
+        const updatedPrompts = prevPrompts.filter(p => p.id !== id);
+        if (selectedPromptId === id) {
+            const otherVersions = updatedPrompts.filter(p => p.baseId === promptToDelete.baseId);
+            if (otherVersions.length > 0) {
+                const nextVersion = otherVersions.sort((a,b) => b.version - a.version)[0];
+                setSelectedPromptId(nextVersion.id);
+            } else {
+                const promptIndex = prevPrompts.findIndex(p => p.id === id);
+                const nextPrompt = updatedPrompts[promptIndex] || updatedPrompts[promptIndex - 1] || null;
+                setSelectedPromptId(nextPrompt?.id || null);
+            }
         }
-    }
+        return updatedPrompts;
+    });
+    
     showNotification(`Prompt version deleted.`);
   }, [prompts, setPrompts, selectedPromptId, showNotification]);
+
+  const handleDeleteAllVersions = useCallback((baseId: string) => {
+    const promptToDelete = prompts.find(p => p.baseId === baseId);
+    if (!promptToDelete) return;
+    
+    const updatedPrompts = prompts.filter(p => p.baseId !== baseId);
+    setPrompts(updatedPrompts);
+    
+    if (selectedPrompt?.baseId === baseId) {
+        setSelectedPromptId(updatedPrompts[0]?.id || null);
+    }
+    
+    showNotification(`Prompt "${promptToDelete.title}" and all versions deleted.`);
+  }, [prompts, setPrompts, showNotification, selectedPrompt]);
 
   const handleForkPrompt = useCallback((id: string) => {
     const originalPrompt = prompts.find(p => p.id === id);
@@ -298,10 +348,6 @@ const App: React.FC = () => {
     setIsSidebarCollapsed(prev => !prev);
   }
 
-  const selectedPrompt = useMemo(() => {
-    return prompts.find(p => p.id === selectedPromptId) || null;
-  }, [prompts, selectedPromptId]);
-
   const latestPrompts = useMemo(() => {
     const promptsByBaseId = new Map<string, PromptV>();
     prompts.forEach(p => {
@@ -321,8 +367,23 @@ const App: React.FC = () => {
   }, [prompts, selectedPrompt]);
 
   const availableModels = useMemo(() => {
-    return ALL_MODELS.filter(model => apiKeys[model.provider]?.status === 'valid');
-  }, [apiKeys]);
+    const models: ModelDefinition[] = [];
+    if (apiKeys.gemini.status === 'valid') {
+        models.push(...ALL_MODELS.filter(m => m.provider === 'gemini'));
+    }
+    if (apiKeys.openai.status === 'valid') {
+        models.push(...openAIModels);
+    }
+    if (apiKeys.anthropic.status === 'valid') {
+        models.push(...ALL_MODELS.filter(m => m.provider === 'anthropic'));
+    }
+    // Sort providers alphabetically, then models by name descending
+    return models.sort((a, b) => {
+       if (a.provider < b.provider) return -1;
+       if (a.provider > b.provider) return 1;
+       return b.name.localeCompare(a.name);
+    });
+  }, [apiKeys, openAIModels]);
 
   return (
     <div className="h-screen w-screen flex bg-slate-900 font-sans overflow-hidden">
@@ -354,11 +415,13 @@ const App: React.FC = () => {
             promptVersions={promptVersions}
             onSave={handleSavePrompt}
             onDelete={handleDeletePrompt}
+            onDeleteAllVersions={handleDeleteAllVersions}
             onFork={handleForkPrompt}
             onNewVersion={handleNewVersion}
             onSelectVersion={handleSelectPrompt}
             availableModels={availableModels}
             apiKeys={apiKeys}
+            autoSaveTestResult={settings.autoSaveTestResult}
           />
         ) : activeView === 'settings' ? (
           <SettingsView 
@@ -367,6 +430,8 @@ const App: React.FC = () => {
             onExport={handleExportData}
             apiKeys={apiKeys}
             onValidateKey={handleValidateKey}
+            settings={settings}
+            onSettingsChange={setSettings}
           />
         ) : (
           <div className="h-full flex items-center justify-center text-slate-500">

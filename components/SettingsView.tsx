@@ -1,6 +1,7 @@
+
 import React, { useRef, useState } from 'react';
 import { ChevronLeftIcon, UploadIcon, DownloadIcon, CheckCircleIcon, XCircleIcon, SpinnerIcon } from './Icons';
-import { ApiKeyConfig, Provider, PROVIDERS } from '../types';
+import { ApiKeyConfig, Provider, PROVIDERS, Settings } from '../types';
 
 interface SettingsViewProps {
   onBack: () => void;
@@ -8,6 +9,8 @@ interface SettingsViewProps {
   onExport: () => void;
   apiKeys: Record<Provider, ApiKeyConfig>;
   onValidateKey: (provider: Provider, key: string) => Promise<void>;
+  settings: Settings;
+  onSettingsChange: (settings: Settings) => void;
 }
 
 const ApiKeyManager: React.FC<{
@@ -66,7 +69,7 @@ const ApiKeyManager: React.FC<{
 };
 
 
-const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onImport, onExport, apiKeys, onValidateKey }) => {
+const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onImport, onExport, apiKeys, onValidateKey, settings, onSettingsChange }) => {
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportClick = () => {
@@ -110,6 +113,32 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onImport, onExport,
                 onValidate={onValidateKey}
               />
             ))}
+          </div>
+        </div>
+        
+        <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
+          <h3 className="text-xl font-semibold text-white mb-4">Testing Preferences</h3>
+          <div className="flex items-center justify-between">
+            <div>
+              <label htmlFor="auto-save-toggle" className="font-medium text-slate-200 block cursor-pointer">
+                Automatically save last test result
+              </label>
+              <p className="text-sm text-slate-400 mt-1">
+                When enabled, the result of a test run will automatically be saved to the prompt version.
+              </p>
+            </div>
+            <div className="flex-shrink-0">
+              <label htmlFor="auto-save-toggle" className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="auto-save-toggle"
+                  className="sr-only peer"
+                  checked={settings.autoSaveTestResult}
+                  onChange={(e) => onSettingsChange({ ...settings, autoSaveTestResult: e.target.checked })}
+                />
+                <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-offset-slate-800 peer-focus:ring-indigo-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
           </div>
         </div>
 
